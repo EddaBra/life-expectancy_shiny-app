@@ -1,0 +1,508 @@
+---
+title: "2.Assignment_Preprocessing Data"
+author: "Edda Brandes, Teun van Wenzel, Luiza Świerzawska and Houssain Baalla"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    number_sections: yes
+    theme: paper
+  pdf_document:
+    toc: yes
+    toc_depth: '3'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Introduction
+
+The aim of this data visualization project is to investigate how the living standard and the health expenditures per capita influence the life expectancy in a country over the years.
+
+Therefore, the world bank data set is used. This data set contains observations from over 200 countries from the 1960s to 2019. 
+
+The dependent variable and respectively the predicted or outcome variable is the life expectancy at birth, measured in years in `lifeexp`. 
+
+The living standard is operationalized by the gross domestic product per capita `gdp_c`. The GDP per capita in dollar is an established indicator for not only the standard of living in a country, but also used to compare the prosperity of countries with different population sizes. 
+
+The health expenditures per capita are operationalized with `health.exp`. In this variable is measured, how much a country dollar invests in the health sector relative to its population.
+
+The year, in which the predicted variable and the predictors are measured is stored in the vector `year`. 
+
+The vector `Country.Name` gives information about the Country, which the values belong to. The factor vector `Continent` group the countries to the continent, where a country is located.
+
+Before programming the ShinyApp, first the data set is been prepared. Secondly, static output elements are generated.
+
+
+# Load Libraries and Read in Data
+
+Set language to English:
+
+```{r, echo=FALSE, results='hide'}
+Sys.setenv(LANG = "en")
+```
+
+Load libraries: 
+
+```{r, results='hide', message=FALSE}
+library(tidyverse)
+library(naniar) # for NA definition
+library(psych)
+library(viridis) # for scale color
+library(viridisLite) # for scale color
+library(ggrepel) # for text labels for points
+library(scales) # for scales 
+library(splines) #for splines
+```
+
+
+Read in Data:
+
+```{r}
+w_df <- as_tibble(read.csv("data/WDB.csv", sep=","))
+```
+
+check working direction, otherwise set it with `setwd()`
+
+```{r}
+getwd()
+```
+
+
+# Prepare Data
+
+First look into the data set: 
+
+```{r, results='hide'}
+str(w_df)
+summary(w_df)
+head(w_df, 6)
+```
+
+## Observations
+
+The data set contains all in all 25 vectors and 15840 observations. One observation should be one country at a certain measurement point between the years 1960 and 2019. 
+
+To check this, the character vectors are converted to a factor. It is checked, how many different countries are included. 
+
+```{r}
+w_df <- w_df %>% mutate(across(c("Country.Name", "Country.Code", "Continent"), as.factor))
+sum(table(levels(w_df$Country.Name)))
+```
+
+The `Country.Name` vector contains 264 country names. This  is not possible, because only 193 official states exists. 
+
+```{r}
+tail(levels(w_df$Country.Name))
+```
+
+Unfortunately, this data set includes merged objects like "World", "Euro-Asia" and so on. To exclude the merged objects from the data frame, all observations are set to `NA`, that are not assigned to a Continent. Then these `NA´s` are dropped rowwise.
+
+```{r}
+table(w_df$Continent)
+w_df$Continent <- recode_factor(w_df$Continent, "All" = NA_character_)
+w_df$Continent <- recode_factor(w_df$Continent, "Aggregated Nations" = NA_character_)
+w_df <- w_df %>% drop_na(Continent)
+```
+
+
+## Predicted variable `lifeexp`
+
+The predicted, outcome or dependent variable $Y$ is `lifeexp`. We drop all observations, where `lifeexp` has an missing value. In doing this, we have for each observation a $Y$ value. 
+
+```{r drop NA lifeexp}
+w_df <- w_df %>% filter(!is.na(lifeexp))
+```
+
+Check the descriptive statistic of the predicted variable:
+
+```{r descriptives lifeexp}
+describe(w_df$lifeexp)
+```
+
+No outliers are observable. 
+
+
+## Create a new variable for gross domestic product per capita
+
+The gross domestic product is dependent on the population. The larger the population, the more workforce and the more economic output can be produced. Therefore, it is common to measure the gross domestic product per capita.
+
+```{r mutate gdp per person}
+table(is.na(w_df$Pop)) 
+w_df <- w_df %>% mutate(gdp_c = gdp / Pop)
+```
+
+The variable `Pop` has only 10 missing values, so it will not lead to systematic missing values.
+
+
+## Check predictors for missings
+
+First, a function is created for the computation of the missings.
+
+```{r create a function}
+mis <- function(x){
+  mis1 <- table(is.na(x))
+  return(mis1)
+}
+```
+
+With this function the total number of missing values for each potential predictor is computed.
+
+```{r}
+table_mis <- rbind(gdp_c =mis(w_df$gdp_c), health =mis(w_df$health.exp))
+table_mis
+```
+
+The table shows the missings for each predictor. We can see, that the `health.exp` has a lot of missing values. For the Shiny visualization it would be problematic, if for a lot of cases no observation is possible. The subsetting of observations with the inputs would not perform well.  
+
+Because of the amount of missing values it seems useful to get a look, if there are certain countries with a lot of missing  values. For each country there are 59 measurement points. If a variable contains 59 missing values, there is not a single valid value for this country. In the further analysis and interpretation it is good to keep in mind, that for these values it is very difficult to predict an outcome, in this case the life experience. Further analysis will show, if these countries should be excluded.
+
+
+```{r}
+missings <- w_df %>% group_by(Country.Name) %>% summarise(across(c("gdp_c", "health.exp"), ~sum(is.na(.x))))  %>% as_tibble
+
+missings <- missings %>% mutate(sum.na =gdp_c + health.exp)
+missings <- missings %>% arrange(-sum.na)
+
+# The following table shows all countries with 100 or more missing values, which means 50 missing values in average per potential predictor
+head(missings, 5)
+```
+
+In the table it is observable, that there could be systematic missings in the data set.  Especially small states, states that newly became independent during the measurement period and states, in which conflict and war has happened have an increased number of missing values. It has to keep in mind for interpretation, that predictions for this countries are less probable, to be correct.
+
+Further, the table displays, that for a lot of countries are equal and more than 41 missing values for the `health.exp`. It could be, that the health expenditures are only measured at a certain year for the large amount of countries.
+
+```{r}
+miss_health_y <- w_df %>% group_by(year) %>% summarize(average = mean(health.exp, na.rm=TRUE))
+view(miss_health_y)
+```
+
+It is displayedm that only since 2000 the health expenditure is measured for the large amount of countries. Consequently, the time span for this project is changed from 2000 to 2017, because in this range for most of the countries are the predictors and predicted variable measured. 
+
+
+## Subset data frames only containing the relevant variables and sum up missing observation points
+
+First, we subset a data frame for the `gdp_c` predictor. Only the `NA´s` for this predictor are excluded in the data set. For coherence, the data set is filtered from 2000 to 2017, too. 
+
+```{r}
+wg_df <- w_df %>% filter(year > 1999 & year < 2018) %>% select(Country.Name, Continent, lifeexp, year, gdp_c) %>% na.omit() 
+write.csv2(wg_df, file="data/WDB_gdp_prep.csv")
+```
+Then, we make list for all observations with missing values. This is important to make transparent, for which countries and which years is no data is available. 
+
+```{r}
+mis_g_table <- w_df %>%  filter(year > 1999 & year < 2018) %>% group_by(Country.Name, year) %>% summarise(sum.na =sum(is.na(gdp_c))) %>%  filter(sum.na > 0) 
+mis_g_table <- mis_g_table %>% 
+    group_by(Country.Name) %>% 
+    summarise(Year = paste(unique(year), collapse = ', '))
+write.table(mis_g_table, file= "missings_gpd_p.csv", sep =";")
+```
+
+
+Second, we subset a data frame for the `health.exp`predictor.
+
+```{r}
+wh_df <- w_df %>% filter(year > 1999 & year < 2018) %>% select(Country.Name, Continent, lifeexp, year, health.exp) %>% na.omit() 
+write.csv2(wh_df, file="data/WDB_health_prep.csv")
+```
+
+The health expenditure is measured from 2000 to 2017.
+
+For this data set a list for missing observations is also created. In this case, there is only data from 2000 to 2019 used, so it is only looked for missing data in that time frame.
+
+```{r}
+mis_h_table <- w_df %>% filter(year > 1999 & year < 2017) %>% group_by(Country.Name, year) %>% summarise(sum.na =sum(is.na(health.exp)))  
+mis_h_table <- mis_h_table %>% 
+    group_by(Country.Name) %>% 
+    summarise(Year = paste(unique(year), collapse = ', '))
+write.table(mis_h_table, file= "data/missings_health.csv", sep =";")
+```
+
+
+# Prepare Output Elements
+
+Before starting with programming the shinyApp it is meaningful to think about how the application should look like in the end and which static output elements are needed. In the next step  the output elements are prepared. This has the advantage, that in the preparing it is possible to check, if the static output works at itself. Consequently, debug can be prevented. 
+
+The user interface, that will be created, has a sidebar with input elements and a main panel with two plots in it.
+
+**Sidebar input elements:**
+
+-   Title: "Life Expectancy at birth worldwide"
+-   Subtitle: "Predicting the Influence of the living standard and health expenditure on life expectancy using data from 2000 to 2017"
+-   Checkbox : Continent
+-   SliderInput without Range / SelectBox: year
+-   SliderInput for the predictor: gpd_p / health.exp
+-   Textbox to label a certain country in the observations: Country.Name
+-   Checkbox: Statical models: reg
+
+**Main Panel**:
+
+-   Plot 1 for life.exp and gpd_p
+-   table with missings for plot 1
+-   Plot 2 for life.exp and health.exp
+-   table with missings for plot 2
+-   a table for Plot 1 statistical models
+-   a table for Plot 2 statistical models
+-   a text element presenting the results of analysis Plot 1
+-   a text element presenting the results of analysis Plot 2
+
+
+In this project data is interactively visualized. For building the static outputs, one specific year, in this case `2017`,  is randomly chosen. The variable `year` is later replaced by an reactive input variable `year`. 
+
+```{r}
+wg_year_df <- wg_df %>% filter(year == 2017)
+wh_year_df <- wh_df %>% filter(year == 2017)
+```
+
+
+## Scatterplot
+
+At the first glance, for both plots a logarithmic predictor variable seems reasonable. Here is to keep in mind, that in this project interactive data visualization is done. So, if the user only compares observations of one continent, the observation´s values are not so far apart. The same applies, if the user changes the range on the x-axis. Using the predictors withour logarithmization makes it also easier to interprete the values.
+
+### Scatterplot for life expectancy and gross domestic product per capita
+
+```{r, warning=FALSE}
+plot_g <- ggplot(wg_year_df, aes(gdp_c, lifeexp, color= Continent))+
+  geom_point(alpha=0.7)+
+  labs(title="Life Expectancy and Gross Domestic Product per Capita",
+       subtitle = "Year : 2017",
+       x="Gross Domestic Product per Capita",
+       y= "Life Expectancy",
+       color= "Continent")+
+  scale_color_viridis(discrete=TRUE) +
+  theme_minimal()+
+  scale_x_continuous(limits=c(0, 100000), labels=scales::dollar)+
+  scale_y_continuous(limits = c(50, 90))+ 
+  geom_text_repel(aes(label=Country.Name), max.overlaps= 12)
+plot_g
+```
+
+#### Prepare as a server output
+
+```
+df_g_filtered <- reactice{(
+  wg_df %>% #prepare filtered data set
+  filter(gdp_c >= input$gdpRangeSlider [1], #filter for range on x-axis gdp_c
+         gdp_c <= input$gdpRangeSlider [2],
+         Continent %in% input$ContinentTypesCheckbox, #filter for Continent Check Box
+         year = input$yearselectBox # filter for year out of a select box
+         ) 
+
+ %>% ggplot(df_g_filtered # filtered data set
+                 aes(gdp_c, lifeexp, color= Continent))+
+  geom_point(alpha=0.7)+
+  labs(title="Life Expectancy and Gross Domestic Product per Capita",
+       subtitle = input$year, #connect input$year to this 
+       x="Gross Domestic Product per Capita",
+       y= "Life Expectancy",
+       color= "Continent")+
+  scale_color_viridis(discrete=TRUE) +
+  theme_minimal()+
+  scale_x_continuous(labels=scales::dollar)+
+   #missing! Text label for country input!
+```
+
+
+
+### Scatterplot for life expectancy and health expenditure
+
+
+```{r, warning=FALSE}
+plot_h <- ggplot(wh_year_df, aes(health.exp, lifeexp, color= Continent))+
+  geom_point(alpha=0.7)+
+  labs(title="Life Expectancy and Health Expenditure",
+       subtitle = "Year : 2017",
+       x="Health Expenditure",
+       y= "Life Expectancy",
+       color= "Continent")+
+  scale_color_viridis(discrete=TRUE) +
+  theme_minimal()+
+  scale_x_continuous (labels=scales::dollar)+
+  scale_y_continuous(limits = c(50, 90))+
+  geom_text_repel(aes(label=Country.Name),max.overlaps= 12)
+plot_h
+```
+
+
+
+#### Prepare as a server output
+
+```
+df_h_filtered <- reactice{(
+  wh_df %>% #prepare filtered data set
+  filter(health.exp >= input$healthRangeSlider [1], #filter for range on x-axis gdp_c
+         health.exp <= input$healthRangeSlider [2],
+         Continent %in% input$ContinentTypesCheckbox, #filter for Continent Check Box
+         year = input$yearselectBox # filter for year out of a select box
+         ) 
+
+ %>% ggplot(df_h_filtered # filtered data set
+                 aes(health.exp, lifeexp, color= Continent))+
+  geom_point(alpha=0.7)+
+  labs(title="Health Expenditure",
+       subtitle = "Year : input$year", #insert here the input element
+       x="Health Expenditure",
+       y= "Life Expectancy",
+       color= "Continent")+
+  scale_color_viridis(discrete=TRUE) +
+  theme_minimal()+
+  scale_x_continuous(labels=scales::dollar)
+   #missing! Text label for country input!
+```
+
+## Prepare statical models
+
+In the data visualization different statistic models for the predictor and the predicted variable should be shown. 
+
+1. Linear regression, because it is the most simplifying version of prediction.
+2. cubic polynomial regression
+3. natural splines
+
+
+### Statistic models for `gdp_c`
+
+Compute the three models for `gdp_c`.
+
+For the interactive part, the data set `wg_df` is replaced by `df_g_filtered`.
+
+```{r}
+mg.lin <- lm(lifeexp ~ gdp_c, data= wg_df)
+mg.cub <- lm(lifeexp ~ poly(gdp_c, 3, raw=TRUE), data=wg_df)
+mg.ns <- lm(lifeexp ~ ns(gdp_c, 3), data = wg_df)
+```
+
+Adding corresponding regression lines to the graphic output:
+
+```{r}
+x_g_pred <- seq(min(wg_df$gdp_c), max(wg_df$gdp_c), length.out = 10) #define x-values
+
+y_g_pred.lin <- predict(mg.lin, newdata = tibble(gdp_c = x_g_pred)) # predict for linear model
+y_g_pred.cub <- predict(mg.cub, newdata = tibble(gdp_c = x_g_pred)) # predict cubic
+y_g_pred.ns <-predict(mg.ns, newdata = tibble(gdp_c = x_g_pred))  # predict natural splines
+
+plot_g <- plot_g + 
+  geom_line(data=tibble(gdp_c = x_g_pred, lifeexp = y_g_pred.lin), size = 1, col = "violetred4")+
+    geom_line(data=tibble(gdp_c = x_g_pred, lifeexp = y_g_pred.cub), size = 1, col = "blue4")+
+    geom_line(data=tibble(gdp_c = x_g_pred, lifeexp = y_g_pred.ns), size = 1, col = "darkslategray3")
+
+plot_g
+```
+
+#### Prepare as a server output
+
+```
+# filtered data set:
+
+df_g_filtered <- reactice{(
+  wg_df %>% #prepare filtered data set
+  filter(gdp_c >= input$gdpRangeSlider [1], #filter for range on x-axis gdp_c
+         gdp_c <= input$gdpRangeSlider [2],
+         Continent %in% input$ContinentTypesCheckbox, #filter for Continent Check Box
+         year = input$yearselectBox # filter for year out of a select box
+         ) 
+
+# predict with this filtered data set:
+
+x_g_pred <- seq(min(df_g_filtered$gdp_c),  max(df_g_filtered$gdp_c), length.out = 10) # replace data set with the filtered one 
+y_g_pred.lin <- predict(mg.lin, newdata = tibble(gdp_c = x_g_pred)) 
+y_g_pred.cub <- predict(mg.cub, newdata = tibble(gdp_c = x_g_pred))
+y_g_pred.ns <-predict(mg.ns, newdata = tibble(gdp_c = x_g_pred))  
+
+#insert the plot from above + models
+
+ggplot(df_g_filtered # filtered data set
+  aes(gdp_c, lifeexp, color= Continent))+
+  geom_point(alpha=0.7)+
+  labs(title="Life Expectancy and Gross Domestic Product per Capita",
+       subtitle = "Year : 2017",
+       x="Gross Domestic Product per Capita",
+       y= "Life Expectancy",
+       color= "Continent")+
+  scale_color_viridis(discrete=TRUE) +
+  theme_minimal()+
+  scale_x_continuous(labels=scales::dollar)+
+   #missing! Text label for country input!
+
+#add the geom_line and manipulate the siue with the input variable (input not defined yet!)
+  geom_line(data=tibble(gdp_c = x_g_pred, lifeexp = y_g_pred.lin), size = input$, col = "violetred4")+
+    geom_line(data=tibble(gdp_c = x_g_pred, lifeexp = y_g_pred.cub), size = input$, col = "blue4")+
+    geom_line(data=tibble(gdp_c = x_g_pred, lifeexp = y_g_pred.ns), size = input$, col = "darkslategray3")
+```
+
+
+### Statistic models for `health.exp`
+
+Compute the three models for `health.exp`.
+
+For the interactive part, the data set `wh_df` is replaced by `df_h_filtered`.
+
+```{r}
+mh.lin <- lm(lifeexp ~ health.exp, data= wh_df)
+mh.cub <- lm(lifeexp ~ poly(health.exp, 3, raw=TRUE), data=wh_df)
+mh.ns <- lm(lifeexp ~ ns(health.exp, 3), data = wh_df)
+```
+
+
+Add the models as an graphic output: 
+
+```{r}
+x_h_pred <- seq(min(wh_df$health.exp), max(wh_df$health.exp), length.out = 10) #define x-values
+
+y_h_pred.lin <- predict(mh.lin, newdata = tibble(health.exp = x_h_pred)) # predict for linear model
+y_h_pred.cub <- predict(mh.cub, newdata = tibble(health.exp = x_h_pred)) # predict cubic
+y_h_pred.ns <-predict(mh.ns, newdata = tibble(health.exp = x_h_pred))  # predict natural splines
+
+plot_h <- plot_h + 
+  geom_line(data=tibble(health.exp = x_h_pred, lifeexp = y_h_pred.lin), size = 1, col = "violetred4")+
+    geom_line(data=tibble(health.exp = x_h_pred, lifeexp = y_h_pred.cub), size = 1, col = "blue4")+
+    geom_line(data=tibble(health.exp = x_h_pred, lifeexp = y_h_pred.ns), size = 1, col = "darkslategray3")
+
+plot_h
+```
+
+
+#### Prepare as a server output
+
+```
+# filtered data set:
+
+df_h_filtered <- reactice{(
+  wh_df %>% #prepare filtered data set
+  filter(health.exp >= input$healthRangeSlider [1], #filter for range on x-axis gdp_c
+         gdp_c <= input$healthRangeSlider [2],
+         Continent %in% input$ContinentTypesCheckbox, #filter for Continent Check Box
+         year = input$yearselectBox # filter for year out of a select box
+         ) 
+
+# predict with this filtered data set:
+
+x_h_pred <- seq(min(wh_df$health.exp), max(wh_df$health.exp), length.out = 10) #define x-values
+
+y_h_pred.lin <- predict(mh.lin, newdata = tibble(health.exp = x_h_pred)) # predict for linear model
+y_h_pred.cub <- predict(mh.cub, newdata = tibble(health.exp = x_h_pred)) # predict cubic
+y_h_pred.ns <-predict(mh.ns, newdata = tibble(health.exp = x_h_pred))  # predict natural splines
+
+#insert the plot from above + models:
+
+ggplot(df_h_filtered # filtered data set
+       aes(health.exp, lifeexp, color= Continent))+
+  geom_point(alpha=0.7)+
+  labs(title="Health Expenditure",
+       subtitle = "Year : input$year", #insert here the input element
+       x="Health Expenditure",
+       y= "Life Expectancy",
+       color= "Continent")+
+  scale_color_viridis(discrete=TRUE) +
+  theme_minimal()+
+  scale_x_continuous(labels=scales::dollar)+
+   #missing! Text label for country input!
+
+#add the geom_line and manipulate the siue with the input variable 
+  geom_line(data=tibble(health.exp = x_h_pred, lifeexp = y_h_pred.lin), size = input$, col = "violetred4")+
+    geom_line(data=tibble(health.exp = x_h_pred, lifeexp = y_h_pred.cub), size = input$, col = "blue4")+
+    geom_line(data=tibble(health.exp = x_h_pred, lifeexp = y_h_pred.ns), size = input$, col = "darkslategray3")
+```
