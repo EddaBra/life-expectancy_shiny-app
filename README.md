@@ -5,10 +5,10 @@
 
 This project illustrate how shiny apps can be created in R. The steps are shown on an simple example with only two predictors and one grouping variable. Using data from the World Data Bank in this project is inverstigated how the living standard and the health expenditures per capita influence the life expectancy in a country over the years.  
 
-First, take a look at the [final result](https://eddabra.shinyapps.io/life-exptancy-at-birth-worldwide/).
-Second, go through the guide: "guide.html"
-Third, open the "ui.R" and server.R" in the "shiny-app-project.Rproj". Comprehend what is done and why. 
-Fourth, use the "WDB.csv" data set in the "data" folder and explore, how the birth rate in a country is related to the health expenditure and living standard around the world.
+First, take a look at the [final result](https://eddabra.shinyapps.io/life-exptancy-at-birth-worldwide/).  
+Second, go through the guide: "guide.html"  
+Third, open the "ui.R" and server.R" in the "shiny-app-project.Rproj". Comprehend what is done and why.   
+Fourth, use the "WDB.csv" data set in the "data" folder and explore, how the birth rate in a country is related to the health expenditure and living standard around the world.  
 
 Have fun!
 
